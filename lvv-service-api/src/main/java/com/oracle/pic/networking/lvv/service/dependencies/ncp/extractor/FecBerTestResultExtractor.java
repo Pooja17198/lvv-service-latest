@@ -134,7 +134,18 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         if (value == null || value.isEmpty()) {
             return value;
         }
-        return value.replace("\\\"", "\"").replace("\\'", "'");
+
+        String normalized = value;
+        // Some callers persist messages with more than one escaping layer (e.g. \\\"...).
+        // Peel escaped quotes repeatedly so block extraction can still detect {"port": {...}}.
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String next = normalized.replace("\\\"", "\"").replace("\\'", "'");
+            if (next.equals(normalized)) {
+                break;
+            }
+            normalized = next;
+        }
+        return normalized;
     }
 
     private int findFieldValueStart(String innerMap, String fieldName) {

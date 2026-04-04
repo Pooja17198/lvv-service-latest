@@ -239,6 +239,24 @@ class FecBerResultExtractorTest {
     }
 
     @Test
+    void extract_jsonStyleDoubleEscapedQuotesMessage_addsOneRowPerInterface() {
+        Map<String, Map<String, List<Map<String, String>>>> deviceResults = new HashMap<>();
+        String singleEscapedMessage =
+                "Failed: The following 2 interfaces did not meet criteria (Duration >= 4h, PRE_FEC_BER < 1e-07, FEC-BIN-COUNT = 0): "
+                        + "{\\\"swp45s0\\\": {\\\"device_name\\\": \\\"aga5-q2-p2-t0-r97\\\", \\\"pre_fec_ber\\\": 1e-09, \\\"rack\\\": \\\"3404\\\", \\\"remote_device\\\": \\\"aga5-c1-b13-t0-r2-compute8\\\", \\\"remote_interface\\\": \\\"slot1/port1-2\\\"}} "
+                        + "{\\\"swp60s0\\\": {\\\"device_name\\\": \\\"aga5-q2-p2-t0-r97\\\", \\\"pre_fec_ber\\\": 4e-10, \\\"rack\\\": \\\"3404\\\", \\\"remote_device\\\": \\\"aga5-c1-b13-t0-r5-compute9\\\", \\\"remote_interface\\\": \\\"slot1/port1-2\\\"}}";
+        String message = singleEscapedMessage.replace("\\\"", "\\\\\"");
+
+        extractor.extract("fallbackDev", message, metricsScope, deviceResults);
+
+        List<Map<String, String>> rows = deviceResults.get("fallbackDev").get("FEC_BER Errors");
+        assertEquals(2, rows.size());
+        assertTrue(rows.stream().anyMatch(r -> "swp45s0".equals(r.get("Device Port"))));
+        assertTrue(rows.stream().anyMatch(r -> "swp60s0".equals(r.get("Device Port"))));
+        verifyNoInteractions(metricsScope);
+    }
+
+    @Test
     void extract_supportsArbitraryQuotedInterfaceNames() {
         Map<String, Map<String, List<Map<String, String>>>> deviceResults = new HashMap<>();
         String message =
