@@ -56,7 +56,15 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
 
         boolean anyRowAdded = false;
 
-        for (FecBerBlock block : extractBlocks(message)) {
+        List<FecBerBlock> blocks = extractBlocks(message);
+        if (blocks.isEmpty()) {
+            String normalizedMessage = normalizeEscapedQuotes(message);
+            if (!normalizedMessage.equals(message)) {
+                blocks = extractBlocks(normalizedMessage);
+            }
+        }
+
+        for (FecBerBlock block : blocks) {
             try {
                 String portName = block.portName();
                 String innerMap = block.innerMap();
@@ -120,6 +128,13 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
 
         String rawValue = innerMap.substring(valueStart, valueEnd).trim();
         return rawValue.isEmpty() ? defaultValue : rawValue;
+    }
+
+    private String normalizeEscapedQuotes(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        return value.replace("\\\"", "\"").replace("\\'", "'");
     }
 
     private int findFieldValueStart(String innerMap, String fieldName) {
