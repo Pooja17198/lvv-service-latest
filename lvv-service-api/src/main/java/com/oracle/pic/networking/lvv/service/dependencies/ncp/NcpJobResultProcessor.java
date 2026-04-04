@@ -49,6 +49,7 @@ public class NcpJobResultProcessor {
     private static final String FAILED = "FAILED";
 
     private static final String UNKNOWN = "Unknown";
+    private static final int FEC_BER_LOG_PREVIEW_CHARS = 1024;
 
     public NcpJobResultProcessor(InputStream inputStream, NcpJobDetailsDao ncpJobDetailsDao) {
         this.inputStream = inputStream;
@@ -143,7 +144,16 @@ public class NcpJobResultProcessor {
                     }
 
                     if (TEST_FEC_BER.equals(testCaseName) && FAILED.equals(status)) {
-                        fecBerError = testCaseNode.path("message").asText();
+                        JsonNode fecBerMessageNode = testCaseNode.path("message");
+                        fecBerError = fecBerMessageNode.asText();
+                        log.info(
+                                "[FEC_BER] Captured failed message for device {} (nodeType={}, asTextLen={}, asTextPreview={}, jsonNodePreview={})",
+                                deviceId,
+                                fecBerMessageNode.getNodeType(),
+                                fecBerError == null ? 0 : fecBerError.length(),
+                                toLogPreview(fecBerError, FEC_BER_LOG_PREVIEW_CHARS),
+                                toLogPreview(
+                                        fecBerMessageNode.toString(), FEC_BER_LOG_PREVIEW_CHARS));
                     } else if (TEST_FEC_BER.equals(testCaseName) && PASSED.equals(status)) {
                         fecBerError = PASSED;
                     }
@@ -228,5 +238,19 @@ public class NcpJobResultProcessor {
                 }
             }
         }
+    }
+
+    private String toLogPreview(String value, int maxChars) {
+        if (value == null) {
+            return "<null>";
+        }
+        String flattened = value.replace("\r", "\\r").replace("\n", "\\n");
+        if (flattened.length() <= maxChars) {
+            return flattened;
+        }
+        return flattened.substring(0, maxChars)
+                + "...(truncated,totalChars="
+                + flattened.length()
+                + ")";
     }
 }
