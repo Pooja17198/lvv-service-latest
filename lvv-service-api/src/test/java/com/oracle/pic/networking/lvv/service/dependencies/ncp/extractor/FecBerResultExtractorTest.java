@@ -157,6 +157,48 @@ class FecBerResultExtractorTest {
     }
 
     @Test
+    void extract_jsonStyleDoubleQuotedMessage_addsOneRowPerInterface() {
+        Map<String, Map<String, List<Map<String, String>>>> deviceResults = new HashMap<>();
+        String message =
+                "Failed: The following 2 interfaces did not meet criteria (Duration >= 4h, PRE_FEC_BER < 1e-07, FEC-BIN-COUNT = 0): "
+                        + "{\"swp20s3\": {\"device_name\": \"aga5-q2-p1-t0-r89\", \"elevation\": \"1\", \"fec_bin\": 0, \"last_clear_counter\": 0.08, \"pre_fec_ber\": 5e-13, \"rack\": \"3403\", \"remote_device\": \"aga5-c1-b12-t0-r19-compute4\", \"remote_interface\": \"slot1/port1-1\", \"up_time\": 0.1, \"warning\": \"UP_TIME=0.1 < 4h; LAST_CLEAR=0.08 < 4h\"}} "
+                        + "{\"swp40s0\": {\"device_name\": \"aga5-q2-p1-t0-r89\", \"elevation\": \"1\", \"fec_bin\": 2, \"last_clear_counter\": 14.57, \"pre_fec_ber\": 1e-10, \"rack\": \"3403\", \"remote_device\": \"aga5-c1-b12-t0-r23-compute5\", \"remote_interface\": \"slot1/port1-1\", \"up_time\": 14.54, \"warning\": \"FEC_BIN_9_COUNT=2 (expected 0)\"}}";
+
+        extractor.extract("fallbackDev", message, metricsScope, deviceResults);
+
+        List<Map<String, String>> rows = deviceResults.get("fallbackDev").get("FEC_BER Errors");
+        assertEquals(2, rows.size());
+
+        Map<String, String> row1 =
+                rows.stream()
+                        .filter(r -> "swp20s3".equals(r.get("Device Port")))
+                        .findFirst()
+                        .orElse(null);
+        assertNotNull(row1);
+        assertEquals("3403", row1.get("Device Rack"));
+        assertEquals("aga5-q2-p1-t0-r89", row1.get("Device Name"));
+        assertEquals("5e-13", row1.get("PRE_FEC_BER"));
+        assertEquals("Unknown", row1.get("Lock Status"));
+        assertEquals("aga5-c1-b12-t0-r19-compute4", row1.get("Remote Device"));
+        assertEquals("slot1/port1-1", row1.get("Remote Interface"));
+
+        Map<String, String> row2 =
+                rows.stream()
+                        .filter(r -> "swp40s0".equals(r.get("Device Port")))
+                        .findFirst()
+                        .orElse(null);
+        assertNotNull(row2);
+        assertEquals("3403", row2.get("Device Rack"));
+        assertEquals("aga5-q2-p1-t0-r89", row2.get("Device Name"));
+        assertEquals("1e-10", row2.get("PRE_FEC_BER"));
+        assertEquals("Unknown", row2.get("Lock Status"));
+        assertEquals("aga5-c1-b12-t0-r23-compute5", row2.get("Remote Device"));
+        assertEquals("slot1/port1-1", row2.get("Remote Interface"));
+
+        verifyNoInteractions(metricsScope);
+    }
+
+    @Test
     void extract_supportsArbitraryQuotedInterfaceNames() {
         Map<String, Map<String, List<Map<String, String>>>> deviceResults = new HashMap<>();
         String message =
