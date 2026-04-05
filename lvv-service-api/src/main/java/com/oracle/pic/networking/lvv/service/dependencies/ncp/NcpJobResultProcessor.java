@@ -50,6 +50,7 @@ public class NcpJobResultProcessor {
 
     private static final String UNKNOWN = "Unknown";
     private static final int FEC_BER_LOG_PREVIEW_CHARS = 1024;
+    private static final int FEC_BER_WARN_PREVIEW_CHARS = 400;
 
     public NcpJobResultProcessor(InputStream inputStream, NcpJobDetailsDao ncpJobDetailsDao) {
         this.inputStream = inputStream;
@@ -146,6 +147,17 @@ public class NcpJobResultProcessor {
                     if (TEST_FEC_BER.equals(testCaseName) && FAILED.equals(status)) {
                         JsonNode fecBerMessageNode = testCaseNode.path("message");
                         fecBerError = fecBerMessageNode.asText();
+                        log.warn(
+                                "[FEC_BER_TRACE] device={} status=FAILED nodeType={} asTextLen={} asTextPreview={}",
+                                deviceId,
+                                fecBerMessageNode.getNodeType(),
+                                fecBerError == null ? 0 : fecBerError.length(),
+                                toLogPreview(fecBerError, FEC_BER_WARN_PREVIEW_CHARS));
+                        log.warn(
+                                "[FEC_BER_TRACE] device={} rawJsonNodePreview={}",
+                                deviceId,
+                                toLogPreview(
+                                        fecBerMessageNode.toString(), FEC_BER_WARN_PREVIEW_CHARS));
                         log.info(
                                 "[FEC_BER] Captured failed message for device {} (nodeType={}, asTextLen={}, asTextPreview={}, jsonNodePreview={})",
                                 deviceId,
