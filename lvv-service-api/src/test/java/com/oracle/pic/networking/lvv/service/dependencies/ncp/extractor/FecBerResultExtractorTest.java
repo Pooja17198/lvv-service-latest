@@ -257,6 +257,23 @@ class FecBerResultExtractorTest {
     }
 
     @Test
+    void extract_jsonStyleMessage_withoutExtraOuterBraceStillParses() {
+        Map<String, Map<String, List<Map<String, String>>>> deviceResults = new HashMap<>();
+        String message =
+                "Failed: The following 2 interfaces did not meet criteria (Duration >= 4h, PRE_FEC_BER < 1e-07, FEC-BIN-COUNT = 0): "
+                        + "{\"swp26s0\": {\"device_name\": \"aga5-q2-p3-t0-r68\", \"pre_fec_ber\": 4e-14, \"rack\": \"2204\", \"remote_device\": \"aga5-q2-p3-t1-r25\", \"remote_interface\": \"swp34s1\"} "
+                        + "{\"swp3s1\": {\"device_name\": \"aga5-q2-p3-t0-r68\", \"pre_fec_ber\": 1e-14, \"rack\": \"2204\", \"remote_device\": \"aga5-q2-p3-t1-r4\", \"remote_interface\": \"swp34s1\"}";
+
+        extractor.extract("fallbackDev", message, metricsScope, deviceResults);
+
+        List<Map<String, String>> rows = deviceResults.get("fallbackDev").get("FEC_BER Errors");
+        assertEquals(2, rows.size());
+        assertTrue(rows.stream().anyMatch(r -> "swp26s0".equals(r.get("Device Port"))));
+        assertTrue(rows.stream().anyMatch(r -> "swp3s1".equals(r.get("Device Port"))));
+        verifyNoInteractions(metricsScope);
+    }
+
+    @Test
     void extract_supportsArbitraryQuotedInterfaceNames() {
         Map<String, Map<String, List<Map<String, String>>>> deviceResults = new HashMap<>();
         String message =

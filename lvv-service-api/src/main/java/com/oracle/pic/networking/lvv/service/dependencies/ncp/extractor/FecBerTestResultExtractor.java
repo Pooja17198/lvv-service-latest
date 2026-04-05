@@ -92,6 +92,7 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         }
 
         if (!anyRowAdded) {
+            logBlockExtractionDiagnostics(message);
             log.warn("[FEC_BER] FEC_BER Error in unexpected format: {}", message);
             scope.emit(MetricNames.ProcessNcpResult.FecBerErrorFormatUnexpected, 1.0);
             fecBerResults.add(createUnknownFecBerResult(deviceId, message));
@@ -196,16 +197,74 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
             }
 
             int outerEnd = findNextNonWhitespaceChar(message, innerEnd + 1);
-            if (outerEnd < 0 || message.charAt(outerEnd) != '}') {
-                continue;
-            }
 
             String innerMap = message.substring(innerStart + 1, innerEnd).trim();
             blocks.add(new FecBerBlock(portName, innerMap));
-            matcher.region(outerEnd + 1, message.length());
+            // Support both forms:
+            // 1) {"port": {...}}  (outer wrapper present)
+            // 2) {"port": {...}   (outer wrapper omitted in message text)
+            int nextSearchStart =
+                    (outerEnd >= 0 && message.charAt(outerEnd) == '}')
+                            ? outerEnd + 1
+                            : innerEnd + 1;
+            matcher.region(nextSearchStart, message.length());
         }
 
         return blocks;
+    }
+
+    private void logBlockExtractionDiagnostics(String message) {
+        Matcher matcher = BLOCK_START_PATTERN.matcher(message);
+        int candidates = 0;
+        while (matcher.find()) {
+            candidates++;
+            String portName = matcher.group(2).trim();
+            int innerStart = matcher.end() - 1;
+            int innerEnd = findMatchingBrace(message, innerStart);
+            int outerEnd = innerEnd < 0 ? -1 : findNextNonWhitespaceChar(message, innerEnd + 1);
+            String outerChar =
+                    outerEnd < 0
+                            ? "<eos>"
+                            : "'" + message.charAt(outerEnd) + "'(code=" + (int) message.charAt(outerEnd) + ")";
+            log.warn(
+                    "[FEC_BER_DIAG] candidatePort={} innerStart={} innerEnd={} outerEnd={} outerChar={}",
+                    portName,
+                    innerStart,
+                    innerEnd,
+                    outerEnd,
+                    outerChar);
+
+            if (innerEnd < 0) {
+                break;
+            }
+            int nextSearchStart =
+                    (outerEnd >= 0 && message.charAt(outerEnd) == '}')
+                            ? outerEnd + 1
+                            : innerEnd + 1;
+            matcher.region(nextSearchStart, message.length());
+        }
+
+        if (candidates == 0) {
+            int firstBrace = message.indexOf('{');
+            log.warn(
+                    "[FEC_BER_DIAG] no block starts found; firstBraceIndex={}, messagePreview={}",
+                    firstBrace,
+                    toLogPreview(message, 300));
+        }
+    }
+
+    private String toLogPreview(String value, int maxChars) {
+        if (value == null) {
+            return "<null>";
+        }
+        String flattened = value.replace("\r", "\\r").replace("\n", "\\n");
+        if (flattened.length() <= maxChars) {
+            return flattened;
+        }
+        return flattened.substring(0, maxChars)
+                + "...(truncated,totalChars="
+                + flattened.length()
+                + ")";
     }
 
     private int findNextNonWhitespaceChar(String value, int startIndex) {
