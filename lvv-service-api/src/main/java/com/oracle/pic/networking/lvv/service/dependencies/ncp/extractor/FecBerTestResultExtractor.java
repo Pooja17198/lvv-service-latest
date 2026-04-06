@@ -140,7 +140,14 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         // Some callers persist messages with more than one escaping layer (e.g. \\\"...).
         // Peel escaped quotes repeatedly so block extraction can still detect {"port": {...}}.
         for (int attempt = 0; attempt < 5; attempt++) {
-            String next = normalized.replace("\\\"", "\"").replace("\\'", "'");
+            String next =
+                    normalized
+                            .replace("\\u0022", "\"")
+                            .replace("\\u0027", "'")
+                            .replace("\\{", "{")
+                            .replace("\\}", "}")
+                            .replace("\\\"", "\"")
+                            .replace("\\'", "'");
             if (next.equals(normalized)) {
                 break;
             }
