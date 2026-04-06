@@ -36,6 +36,10 @@ class NcpJobResultProcessorTest {
                 new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), ncpJobDetailsDao);
     }
 
+    private String escapeForJsonValue(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     @Test
     void processJobResult_invalidJson_throws_and_emits_metric() {
         NcpJobResultProcessor p = newProcessorWithJson("not_json");
@@ -679,6 +683,72 @@ class NcpJobResultProcessorTest {
         verify(metricsScope, never())
                 .emit(eq(MetricNames.ProcessNcpResult.FecBerErrorFormatUnexpected), anyDouble());
         verify(metricsScope, never()).emit(eq(MetricNames.ProcessNcpResult.Pass), anyDouble());
+    }
+
+    @Test
+    void processJobResult_fecBerFailures_jsonStyleBlocks_parsesAndEmitsFecBerMetric() {
+        String fecBerMsg =
+                "Failed: The following 2 interfaces did not meet criteria (Duration >= 4h, PRE_FEC_BER < 1e-07, FEC-BIN-COUNT = 0): "
+                        + "{\"swp20s3\": {\"device_name\": \"aga5-q2-p1-t0-r89\", \"fec_bin\": 0, \"pre_fec_ber\": 5e-13, \"rack\": \"3403\", \"remote_device\": \"aga5-c1-b12-t0-r19-compute4\", \"remote_interface\": \"slot1/port1-1\", \"warning\": \"UP_TIME=0.1 < 4h\"}} "
+                        + "{\"swp40s0\": {\"device_name\": \"aga5-q2-p1-t0-r89\", \"fec_bin\": 2, \"pre_fec_ber\": 1e-10, \"rack\": \"3403\", \"remote_device\": \"aga5-c1-b12-t0-r23-compute5\", \"remote_interface\": \"slot1/port1-1\", \"warning\": \"FEC_BIN_9_COUNT=2 (expected 0)\"}}";
+
+        String json =
+                """
+                        {
+                          "testResults": {
+                            "devFJson": {
+                              "healthCheckReport": {
+                                "testCases": [
+                                  { "testCase": "test_fec_ber_threshold", "status": "FAILED", "message": "%s" }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                        """
+                        .formatted(escapeForJsonValue(fecBerMsg));
+
+        NcpJobResultProcessor p = newProcessorWithJson(json);
+        assertDoesNotThrow(() -> p.processJobResult(metricsScope));
+
+        Map<String, Map<String, List<Map<String, String>>>> results = p.getDeviceResults();
+        Map<String, List<Map<String, String>>> perDev = results.get("devFJson");
+        assertNotNull(perDev, "Device entry should exist");
+
+        List<Map<String, String>> fec = perDev.get("FEC_BER Errors");
+        assertNotNull(fec, "FEC_BER Errors table should exist");
+        assertEquals(2, fec.size(), "Two FEC_BER rows expected");
+
+        Map<String, String> rowSwp20s3 =
+                fec.stream()
+                        .filter(r -> "swp20s3".equals(r.get("Device Port")))
+                        .findFirst()
+                        .orElse(null);
+        assertNotNull(rowSwp20s3);
+        assertEquals("3403", rowSwp20s3.get("Device Rack"));
+        assertEquals("aga5-q2-p1-t0-r89", rowSwp20s3.get("Device Name"));
+        assertEquals("5e-13", rowSwp20s3.get("PRE_FEC_BER"));
+        assertEquals("Unknown", rowSwp20s3.get("Lock Status"));
+        assertEquals("aga5-c1-b12-t0-r19-compute4", rowSwp20s3.get("Remote Device"));
+        assertEquals("slot1/port1-1", rowSwp20s3.get("Remote Interface"));
+
+        Map<String, String> rowSwp40s0 =
+                fec.stream()
+                        .filter(r -> "swp40s0".equals(r.get("Device Port")))
+                        .findFirst()
+                        .orElse(null);
+        assertNotNull(rowSwp40s0);
+        assertEquals("3403", rowSwp40s0.get("Device Rack"));
+        assertEquals("aga5-q2-p1-t0-r89", rowSwp40s0.get("Device Name"));
+        assertEquals("1e-10", rowSwp40s0.get("PRE_FEC_BER"));
+        assertEquals("Unknown", rowSwp40s0.get("Lock Status"));
+        assertEquals("aga5-c1-b12-t0-r23-compute5", rowSwp40s0.get("Remote Device"));
+        assertEquals("slot1/port1-1", rowSwp40s0.get("Remote Interface"));
+
+        verify(metricsScope, atLeastOnce())
+                .emit(eq(MetricNames.ProcessNcpResult.FecBerError), anyDouble());
+        verify(metricsScope, never())
+                .emit(eq(MetricNames.ProcessNcpResult.FecBerErrorFormatUnexpected), anyDouble());
     }
 
     @Test

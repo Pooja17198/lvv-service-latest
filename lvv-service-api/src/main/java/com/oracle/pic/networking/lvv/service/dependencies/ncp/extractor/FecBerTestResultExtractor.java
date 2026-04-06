@@ -29,7 +29,7 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
 
     private static final String UNKNOWN = "Unknown";
     private static final Pattern BLOCK_START_PATTERN =
-            Pattern.compile("\\{\\s*'([^']+)'\\s*:\\s*\\{");
+            Pattern.compile("\\{\\s*(['\"])([^'\"]+)\\1\\s*:\\s*\\{");
 
     @Override
     public String testName() {
@@ -56,7 +56,15 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
 
         boolean anyRowAdded = false;
 
-        for (FecBerBlock block : extractBlocks(message)) {
+        List<FecBerBlock> blocks = extractBlocks(message);
+        if (blocks.isEmpty()) {
+            String normalizedMessage = normalizeEscapedQuotes(message);
+            if (!normalizedMessage.equals(message)) {
+                blocks = extractBlocks(normalizedMessage);
+            }
+        }
+
+        for (FecBerBlock block : blocks) {
             try {
                 String portName = block.portName();
                 String innerMap = block.innerMap();
@@ -84,6 +92,7 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         }
 
         if (!anyRowAdded) {
+            logBlockExtractionDiagnostics(message);
             log.warn("[FEC_BER] FEC_BER Error in unexpected format: {}", message);
             scope.emit(MetricNames.ProcessNcpResult.FecBerErrorFormatUnexpected, 1.0);
             fecBerResults.add(createUnknownFecBerResult(deviceId, message));
@@ -95,24 +104,14 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
             return defaultValue;
         }
 
-        String fieldToken = "'" + fieldName + "'";
-        int fieldStart = innerMap.indexOf(fieldToken);
-        if (fieldStart < 0) {
-            return defaultValue;
-        }
-
-        int colonIndex = innerMap.indexOf(':', fieldStart + fieldToken.length());
-        if (colonIndex < 0) {
-            return defaultValue;
-        }
-
-        int valueStart = findNextNonWhitespaceChar(innerMap, colonIndex + 1);
+        int valueStart = findFieldValueStart(innerMap, fieldName);
         if (valueStart < 0) {
             return defaultValue;
         }
 
-        if (innerMap.charAt(valueStart) == '\'') {
-            int valueEnd = findClosingQuote(innerMap, valueStart + 1);
+        char firstChar = innerMap.charAt(valueStart);
+        if (firstChar == '\'' || firstChar == '"') {
+            int valueEnd = findClosingQuote(innerMap, valueStart + 1, firstChar);
             if (valueEnd < 0) {
                 return defaultValue;
             }
@@ -132,9 +131,49 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         return rawValue.isEmpty() ? defaultValue : rawValue;
     }
 
-    private int findClosingQuote(String value, int startIndex) {
+    private String normalizeEscapedQuotes(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+
+        String normalized = value;
+        // Some callers persist messages with more than one escaping layer (e.g. \\\"...).
+        // Peel escaped quotes repeatedly so block extraction can still detect {"port": {...}}.
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String next =
+                    normalized
+                            .replace("\\u0022", "\"")
+                            .replace("\\u0027", "'")
+                            .replace("\\{", "{")
+                            .replace("\\}", "}")
+                            .replace("\\\"", "\"")
+                            .replace("\\'", "'");
+            if (next.equals(normalized)) {
+                break;
+            }
+            normalized = next;
+        }
+        return normalized;
+    }
+
+    private int findFieldValueStart(String innerMap, String fieldName) {
+        String quotedOrBareFieldPattern =
+                "(?:['\"]"
+                        + Pattern.quote(fieldName)
+                        + "['\"]|\\b"
+                        + Pattern.quote(fieldName)
+                        + "\\b)\\s*:";
+
+        Matcher matcher = Pattern.compile(quotedOrBareFieldPattern).matcher(innerMap);
+        if (!matcher.find()) {
+            return -1;
+        }
+        return findNextNonWhitespaceChar(innerMap, matcher.end());
+    }
+
+    private int findClosingQuote(String value, int startIndex, char quoteChar) {
         for (int index = startIndex; index < value.length(); index++) {
-            if (value.charAt(index) == '\'' && !isEscaped(value, index)) {
+            if (value.charAt(index) == quoteChar && !isEscaped(value, index)) {
                 return index;
             }
         }
@@ -155,8 +194,9 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         List<FecBerBlock> blocks = new ArrayList<>();
 
         Matcher matcher = BLOCK_START_PATTERN.matcher(message);
-        while (matcher.find()) {
-            String portName = matcher.group(1).trim();
+        int searchFrom = 0;
+        while (searchFrom >= 0 && searchFrom < message.length() && matcher.find(searchFrom)) {
+            String portName = matcher.group(2).trim();
             int innerStart = matcher.end() - 1;
 
             int innerEnd = findMatchingBrace(message, innerStart);
@@ -165,16 +205,76 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
             }
 
             int outerEnd = findNextNonWhitespaceChar(message, innerEnd + 1);
-            if (outerEnd < 0 || message.charAt(outerEnd) != '}') {
-                continue;
-            }
 
             String innerMap = message.substring(innerStart + 1, innerEnd).trim();
             blocks.add(new FecBerBlock(portName, innerMap));
-            matcher.region(outerEnd + 1, message.length());
+            // Support both forms:
+            // 1) {"port": {...}}  (outer wrapper present)
+            // 2) {"port": {...}   (outer wrapper omitted in message text)
+            int nextSearchStart =
+                    (outerEnd >= 0 && message.charAt(outerEnd) == '}')
+                            ? outerEnd + 1
+                            : innerEnd + 1;
+            // Drive scanning with an explicit cursor to avoid matcher region state quirks.
+            searchFrom = Math.max(nextSearchStart, matcher.end());
         }
 
         return blocks;
+    }
+
+    private void logBlockExtractionDiagnostics(String message) {
+        Matcher matcher = BLOCK_START_PATTERN.matcher(message);
+        int candidates = 0;
+        int searchFrom = 0;
+        while (searchFrom >= 0 && searchFrom < message.length() && matcher.find(searchFrom)) {
+            candidates++;
+            String portName = matcher.group(2).trim();
+            int innerStart = matcher.end() - 1;
+            int innerEnd = findMatchingBrace(message, innerStart);
+            int outerEnd = innerEnd < 0 ? -1 : findNextNonWhitespaceChar(message, innerEnd + 1);
+            String outerChar =
+                    outerEnd < 0
+                            ? "<eos>"
+                            : "'" + message.charAt(outerEnd) + "'(code=" + (int) message.charAt(outerEnd) + ")";
+            log.warn(
+                    "[FEC_BER_DIAG] candidatePort={} innerStart={} innerEnd={} outerEnd={} outerChar={}",
+                    portName,
+                    innerStart,
+                    innerEnd,
+                    outerEnd,
+                    outerChar);
+
+            if (innerEnd < 0) {
+                break;
+            }
+            int nextSearchStart =
+                    (outerEnd >= 0 && message.charAt(outerEnd) == '}')
+                            ? outerEnd + 1
+                            : innerEnd + 1;
+            searchFrom = Math.max(nextSearchStart, matcher.end());
+        }
+
+        if (candidates == 0) {
+            int firstBrace = message.indexOf('{');
+            log.warn(
+                    "[FEC_BER_DIAG] no block starts found; firstBraceIndex={}, messagePreview={}",
+                    firstBrace,
+                    toLogPreview(message, 300));
+        }
+    }
+
+    private String toLogPreview(String value, int maxChars) {
+        if (value == null) {
+            return "<null>";
+        }
+        String flattened = value.replace("\r", "\\r").replace("\n", "\\n");
+        if (flattened.length() <= maxChars) {
+            return flattened;
+        }
+        return flattened.substring(0, maxChars)
+                + "...(truncated,totalChars="
+                + flattened.length()
+                + ")";
     }
 
     private int findNextNonWhitespaceChar(String value, int startIndex) {
@@ -189,16 +289,22 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
     private int findMatchingBrace(String value, int openingBraceIndex) {
         int braceDepth = 0;
         boolean inSingleQuotes = false;
+        boolean inDoubleQuotes = false;
 
         for (int index = openingBraceIndex; index < value.length(); index++) {
             char currentChar = value.charAt(index);
 
-            if (currentChar == '\'' && !isEscaped(value, index)) {
+            if (currentChar == '\'' && !inDoubleQuotes && !isEscaped(value, index)) {
                 inSingleQuotes = !inSingleQuotes;
                 continue;
             }
 
-            if (inSingleQuotes) {
+            if (currentChar == '"' && !inSingleQuotes && !isEscaped(value, index)) {
+                inDoubleQuotes = !inDoubleQuotes;
+                continue;
+            }
+
+            if (inSingleQuotes || inDoubleQuotes) {
                 continue;
             }
 

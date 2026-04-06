@@ -23,6 +23,10 @@ public class StoreKeeperHelper {
     private static final Set<String> ALLOWED_RACK_STATES =
             Set.of("DELIVERED", "RECEIVED", "AVAILABLE");
     private static final int RACK_LIST_SIZE = 1000;
+    private static final String EMPTY_RESPONSE_ERROR_TEMPLATE =
+            "Empty response from StoreKeeper for list of racks in buildingName=%s blockName=%s";
+    private static final String FETCH_FAILED_ERROR_TEMPLATE =
+            "Fetching listRackLocationsMap from StoreKeeper failed for buildingName=%s blockName=%s";
 
     @Inject
     public StoreKeeperHelper(StoreKeeper storeKeeperClient) {
@@ -69,9 +73,8 @@ public class StoreKeeperHelper {
                     scope.emit(MetricNames.FetchRacks.FetchRacksFailed, 1.0);
                     throw new RenderableException(
                             ErrorCode.ExternalServerInvalidResponse,
-                            "Empty response from Storekeeper for list of racks in building {} block {}",
-                            buildingName,
-                            blockName);
+                            formatStoreKeeperError(
+                                    EMPTY_RESPONSE_ERROR_TEMPLATE, buildingName, blockName));
                 }
                 pageToken = rackResponse.getListRackLocationsMap().getNextPageToken();
 
@@ -121,10 +124,22 @@ public class StoreKeeperHelper {
             scope.emit(MetricNames.FetchRacks.FetchRacksFailed, 1.0);
             throw new RenderableException(
                     ErrorCode.ExternalServerInvalidResponse,
-                    "Fetching listRackLocationsMap from StoreKeeper failed for buildingName={} blockName={}",
-                    buildingName,
-                    blockName);
+                    formatStoreKeeperError(FETCH_FAILED_ERROR_TEMPLATE, buildingName, blockName));
         }
         return rackList;
+    }
+
+    private String formatStoreKeeperError(String template, String buildingName, String blockName) {
+        return String.format(
+                template,
+                safeForErrorMessage(buildingName),
+                safeForErrorMessage(blockName));
+    }
+
+    private String safeForErrorMessage(String value) {
+        if (value == null || value.isBlank()) {
+            return "<unknown>";
+        }
+        return value;
     }
 }
