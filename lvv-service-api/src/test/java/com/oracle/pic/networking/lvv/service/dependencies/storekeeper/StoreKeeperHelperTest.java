@@ -159,6 +159,10 @@ class StoreKeeperHelperTest {
                         RenderableException.class,
                         () -> helper.listRacks(block, building, metricsScope));
         assertNotNull(ex);
+        assertTrue(ex.getMessage().contains(building));
+        assertTrue(ex.getMessage().contains(block));
+        assertFalse(ex.getMessage().contains("buildingName={}"));
+        assertFalse(ex.getMessage().contains("blockName={}"));
 
         verify(metricsScope, times(2)).emit(eq(MetricNames.FetchRacks.FetchRacksFailed), eq(1.0));
         verify(storeKeeper, times(1)).listRackLocationsMap(any(ListRackLocationsMapRequest.class));
@@ -201,6 +205,10 @@ class StoreKeeperHelperTest {
                         RenderableException.class,
                         () -> helper.listRacks(block, building, metricsScope));
         assertNotNull(ex);
+        assertTrue(ex.getMessage().contains(building));
+        assertTrue(ex.getMessage().contains(block));
+        assertFalse(ex.getMessage().contains("buildingName={}"));
+        assertFalse(ex.getMessage().contains("blockName={}"));
 
         verify(metricsScope, times(1)).emit(eq(MetricNames.FetchRacks.FetchRacksFailed), eq(1.0));
         verify(storeKeeper, times(1)).listRackLocationsMap(any(ListRackLocationsMapRequest.class));
