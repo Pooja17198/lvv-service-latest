@@ -194,7 +194,8 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
         List<FecBerBlock> blocks = new ArrayList<>();
 
         Matcher matcher = BLOCK_START_PATTERN.matcher(message);
-        while (matcher.find()) {
+        int searchFrom = 0;
+        while (searchFrom >= 0 && searchFrom < message.length() && matcher.find(searchFrom)) {
             String portName = matcher.group(2).trim();
             int innerStart = matcher.end() - 1;
 
@@ -214,7 +215,8 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
                     (outerEnd >= 0 && message.charAt(outerEnd) == '}')
                             ? outerEnd + 1
                             : innerEnd + 1;
-            matcher.region(nextSearchStart, message.length());
+            // Drive scanning with an explicit cursor to avoid matcher region state quirks.
+            searchFrom = Math.max(nextSearchStart, matcher.end());
         }
 
         return blocks;
@@ -223,7 +225,8 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
     private void logBlockExtractionDiagnostics(String message) {
         Matcher matcher = BLOCK_START_PATTERN.matcher(message);
         int candidates = 0;
-        while (matcher.find()) {
+        int searchFrom = 0;
+        while (searchFrom >= 0 && searchFrom < message.length() && matcher.find(searchFrom)) {
             candidates++;
             String portName = matcher.group(2).trim();
             int innerStart = matcher.end() - 1;
@@ -248,7 +251,7 @@ public class FecBerTestResultExtractor implements TestResultExtractor {
                     (outerEnd >= 0 && message.charAt(outerEnd) == '}')
                             ? outerEnd + 1
                             : innerEnd + 1;
-            matcher.region(nextSearchStart, message.length());
+            searchFrom = Math.max(nextSearchStart, matcher.end());
         }
 
         if (candidates == 0) {
